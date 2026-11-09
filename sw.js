@@ -1,6 +1,6 @@
 // Offline-Unterstützung für die Handy-App
 // Immer zuerst das Netz fragen (damit Updates sofort ankommen), ohne Netz den Speicher nutzen.
-const CACHE = 'radar-v2.3.1';
+const CACHE = 'radar-v2.4.0';
 const SHELL = ['./', './index.html', './app.css', './app.js', './lib.js', './stores.js', './manifest.webmanifest',
   './icons/app-192.png', './icons/app-512.png', './icons/apple-touch-icon.png'];
 
