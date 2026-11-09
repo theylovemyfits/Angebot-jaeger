@@ -204,3 +204,5 @@ h3.first { margin-top: 0; }
 .logo-text.big { font-size: 20px; line-height: 38px; }
 .chip .logo { margin-right: 6px; }
 .offer .store .logo { width: 15px; height: 15px; border-radius: 4px; vertical-align: -3px; }
+
+.note { background: var(--bg); border-left: 4px solid var(--best); border-radius: 0 8px 8px 0; padding: 8px 12px; margin: 0 0 10px; font-size: .9rem; }
