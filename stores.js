@@ -13,6 +13,9 @@ const STORE_COLORS = {
   'aldi-sued': '#2563EB', 'aldi-nord': '#0891B2', 'lidl': '#CA8A04', 'rewe': '#DC2626',
   'edeka': '#7C3AED', 'kaufland': '#DB2777', 'penny': '#059669', 'netto': '#EA580C'
 };
+// Logos liegen unter icons/maerkte/<id>.png
+const STORE_LOGOS = ['aldi-sued', 'aldi-nord', 'lidl', 'rewe', 'edeka', 'kaufland', 'penny', 'netto'];
+
 const DEFAULT_SETTINGS = { hour: 7, stores: DEFAULT_STORES, mobile: {} };
 
 async function getSettings() {
