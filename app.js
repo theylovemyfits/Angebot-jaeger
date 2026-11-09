@@ -2,6 +2,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const IS_EXT = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id && chrome.storage);
+const EMBED = /[?&]ansicht=widget\b/.test(location.search); // im Widget (Scriptable) geöffnet
 
 const S = { stores: [], current: [], entries: [], catalog: [], watch: [], updatedAt: null, running: false, canEdit: IS_EXT, error: null };
 const ui = { q: '', stores: new Set(), limit: 100, range: 90, prefill: '', formKey: null, draft: null };
@@ -118,6 +119,11 @@ function storeName(id) {
   return s ? s.name : id;
 }
 const color = id => STORE_COLORS[id] || '#888';
+function storeIcon(id, big) {
+  return STORE_LOGOS.includes(id)
+    ? `<img class="logo${big ? ' big' : ''}" src="icons/maerkte/${id}.png" alt="">`
+    : `<span class="logo${big ? ' big' : ''} logo-text" style="background:${color(id)}">${esc(storeName(id).slice(0, 1))}</span>`;
+}
 function fmtTime(ts) {
   const d = new Date(ts), now = new Date();
   const t = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -135,6 +141,7 @@ function route() {
   if (h.startsWith('edit-')) return { v: 'form', id: h.slice(5) };
   if (h === 'neu') return { v: 'form', id: null };
   if (h === 'alle') return { v: 'alle' };
+  if (h.startsWith('markt-')) return { v: 'alle', store: h.slice(6) };
   if (h === 'mehr' || h === 'zugang') return { v: 'mehr' };
   return { v: 'liste' };
 }
@@ -158,7 +165,12 @@ function render() {
   const main = $('#main');
   if (r.v === 'liste') main.innerHTML = viewListe();
   if (r.v === 'produkt') main.innerHTML = viewProdukt(r.id);
-  if (r.v === 'alle') { main.innerHTML = viewAlleShell(); renderAlleList(); }
+  if (r.v === 'alle') {
+    if (r.store && ui.storeRoute !== r.store) { ui.stores = new Set([r.store]); ui.q = ''; ui.limit = 100; }
+    ui.storeRoute = r.store || null;
+    main.innerHTML = viewAlleShell();
+    renderAlleList();
+  }
   if (r.v === 'mehr') main.innerHTML = viewMehr();
   renderInstall();
 }
@@ -209,7 +221,7 @@ function viewProdukt(id) {
       ${b.o ? `<span class="old">statt <s>${formatPrice(b.o)}</s></span>` : ''}</div></div>
       ${st.verdict ? `<p class="verdict ${st.verdict.level}">${esc(st.verdict.text)}</p>` : ''}`;
     const others = st.current.slice(1, 7);
-    if (others.length) html += `<ul class="others">${others.map(o => `<li><span><span class="dot" style="background:${color(o.s)}"></span>${esc(storeName(o.s))}: ${esc(o.t)}</span><span class="p">${formatPrice(o.p)}</span></li>`).join('')}</ul>`;
+    if (others.length) html += `<ul class="others">${others.map(o => `<li><span>${storeIcon(o.s)}${esc(storeName(o.s))}: ${esc(o.t)}</span><span class="p">${formatPrice(o.p)}</span></li>`).join('')}</ul>`;
   } else {
     html += `<p class="muted">Gerade in keinem Markt im Angebot.</p>`;
   }
@@ -370,8 +382,19 @@ async function saveWithFeedback(w, next) {
 function viewAlleShell() {
   const counts = {};
   S.current.forEach(i => { counts[i.s] = (counts[i.s] || 0) + 1; });
-  return `<div class="search"><input id="q" type="search" value="${esc(ui.q)}" placeholder="Angebote durchsuchen" aria-label="Angebote durchsuchen"></div>
-    <div class="chips">${S.stores.map(s => `<button class="chip" type="button" data-act="store" data-store="${s.id}" aria-pressed="${ui.stores.has(s.id)}"><span class="dot" style="background:${color(s.id)}"></span>${esc(s.name)}<span class="n">${counts[s.id] || 0}</span></button>`).join('')}</div>
+  let head = '';
+  if (ui.stores.size === 1) {
+    const sid = [...ui.stores][0];
+    const hits = activeWatch(S.watch)
+      .map(w => ({ w, m: S.current.filter(i => i.s === sid && matchWatch(w, i.t, i.b)).sort((a, b) => a.p - b.p)[0] }))
+      .filter(h => h.m);
+    head = `<h2 class="big store-title">${storeIcon(sid, true)}Angebote bei ${esc(storeName(sid))}</h2>
+      ${hits.length ? `<section class="card store-hits"><h3 class="first">Von deiner Merkliste</h3><ul class="plain">${hits.map(h =>
+        `<li><a class="hit-link" href="#p-${esc(h.w.id)}"><span><strong>${esc(h.w.product)}</strong><span class="block muted small">${esc(h.m.t)}</span></span><span class="tag">${formatPrice(h.m.p)}</span></a></li>`).join('')}</ul></section>`
+      : `<p class="hint-box">Von deiner Merkliste ist hier gerade nichts im Angebot.</p>`}`;
+  }
+  return head + `<div class="search"><input id="q" type="search" value="${esc(ui.q)}" placeholder="Angebote durchsuchen" aria-label="Angebote durchsuchen"></div>
+    <div class="chips">${S.stores.map(s => `<button class="chip" type="button" data-act="store" data-store="${s.id}" aria-pressed="${ui.stores.has(s.id)}">${storeIcon(s.id)}${esc(s.name)}<span class="n">${counts[s.id] || 0}</span></button>`).join('')}</div>
     ${S.stores.filter(s => s.error).map(s => `<p class="notice"><strong>${esc(s.name)}:</strong> ${esc(s.error)}</p>`).join('')}
     <ul id="offer-list" class="offers"></ul>
     <button id="more" class="btn wide" type="button" data-act="more" hidden>Mehr anzeigen</button>`;
@@ -383,7 +406,7 @@ function renderAlleList() {
     const onList = watch.some(w => matchWatch(w, i.t, i.b));
     return `<li class="offer">
       ${i.i ? `<img src="${esc(i.i)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
-      <div class="info"><span class="store"><span class="dot" style="background:${color(i.s)}"></span>${esc(storeName(i.s))}${onList ? ' · <span class="on-list">auf deiner Merkliste</span>' : ''}</span>
+      <div class="info"><span class="store">${storeIcon(i.s)}${esc(storeName(i.s))}${onList ? ' · <span class="on-list">auf deiner Merkliste</span>' : ''}</span>
         <span class="block">${esc(i.t)}</span>
         ${i.o ? `<span class="old">statt <s>${formatPrice(i.o)}</s></span>` : ''}</div>
       <span class="tag">${formatPrice(i.p)}</span>
@@ -399,7 +422,7 @@ const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.
 
 function storeStatusHtml() {
   if (!S.stores.length) return '<p class="muted">Noch keine Daten.</p>';
-  return `<ul class="plain">${S.stores.map(s => `<li><span><span class="dot" style="background:${color(s.id)}"></span>${esc(s.name)}</span>
+  return `<ul class="plain">${S.stores.map(s => `<li><span>${storeIcon(s.id)}${esc(s.name)}</span>
     <span class="${s.error ? 'error-text' : 'muted'}">${s.error ? 'Fehler' : s.count + ' Angebote'}</span></li>`).join('')}</ul>`;
 }
 
@@ -447,7 +470,7 @@ function renderInstall() {
   if (!box) return;
   let dismissed = false;
   try { dismissed = localStorage.getItem('radar-install-hidden') === '1'; } catch {}
-  if (IS_EXT || isStandalone() || dismissed || route().v === 'mehr') { box.innerHTML = ''; return; }
+  if (IS_EXT || EMBED || isStandalone() || dismissed || route().v === 'mehr') { box.innerHTML = ''; return; }
   const text = isIOS() ? 'Tipp: In Safari auf <strong>Teilen → Zum Home-Bildschirm</strong>, dann startet Radar wie eine App.'
     : 'Installier Radar als App, dann startet es ohne Browserleiste.';
   box.innerHTML = `<div class="install-banner"><p>${text}</p>
@@ -487,7 +510,14 @@ $('#main').addEventListener('click', async e => {
   if (!el) return;
   const act = el.dataset.act;
   if (act === 'range') { ui.range = Number(el.dataset.range); render(); }
-  if (act === 'store') { const id = el.dataset.store; ui.stores.has(id) ? ui.stores.delete(id) : ui.stores.add(id); ui.limit = 100; el.setAttribute('aria-pressed', ui.stores.has(id)); renderAlleList(); }
+  if (act === 'store') {
+    const id = el.dataset.store;
+    ui.stores.has(id) ? ui.stores.delete(id) : ui.stores.add(id);
+    ui.limit = 100;
+    if (route().store) history.replaceState(null, '', '#alle');
+    ui.storeRoute = null;
+    render();
+  }
   if (act === 'more') { ui.limit += 100; renderAlleList(); }
   if (act === 'add-offer') { ui.prefill = el.dataset.title; ui.formKey = null; if (location.hash === '#neu') render(); else location.hash = '#neu'; }
   if (act === 'brand') {
