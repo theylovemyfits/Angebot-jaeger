@@ -189,3 +189,18 @@ h3.first { margin-top: 0; }
   body { overscroll-behavior-y: none; -webkit-user-select: none; user-select: none; }
   input, .block, .h-what { -webkit-user-select: text; user-select: text; }
 }
+
+/* Marktansicht */
+.store-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.big-dot { width: 14px; height: 14px; margin: 0; }
+.store-hits { margin-bottom: 14px; }
+.hit-link { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; text-decoration: none; }
+.plain li:has(.hit-link) { display: block; }
+
+/* Markt-Logos */
+.logo { display: inline-block; width: 18px; height: 18px; border-radius: 5px; vertical-align: -4px; margin-right: 6px; object-fit: contain; }
+.logo.big { width: 38px; height: 38px; border-radius: 10px; margin: 0; vertical-align: middle; }
+.logo-text { color: #fff; font: 800 11px/18px var(--body); text-align: center; }
+.logo-text.big { font-size: 20px; line-height: 38px; }
+.chip .logo { margin-right: 6px; }
+.offer .store .logo { width: 15px; height: 15px; border-radius: 4px; vertical-align: -3px; }
