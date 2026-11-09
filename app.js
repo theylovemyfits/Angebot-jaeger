@@ -4,7 +4,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const IS_EXT = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id && chrome.storage);
 const EMBED = /[?&]ansicht=widget\b/.test(location.search); // im Widget (Scriptable) geöffnet
 
-const S = { stores: [], current: [], entries: [], catalog: [], watch: [], updatedAt: null, running: false, canEdit: IS_EXT, error: null };
+const S = { stores: [], current: [], entries: [], catalog: [], watch: [], updatedAt: null, hour: 7, running: false, canEdit: IS_EXT, error: null };
 const ui = { q: '', stores: new Set(), limit: 100, range: 90, prefill: '', formKey: null, draft: null };
 
 function b64enc(str) {
@@ -43,6 +43,7 @@ const Ext = {
     S.catalog = S.entries.filter(e => e.r.length && e.r[e.r.length - 1][1] >= recent);
     S.watch = d.watchlist || watchFromFavorites(d.favorites);
     S.updatedAt = d.lastRun || null;
+    S.hour = settings.hour;
     const ss = await chrome.storage.session.get('running');
     S.running = !!(ss.running && Date.now() - ss.running < 12 * 60e3);
   },
@@ -80,6 +81,7 @@ const Web = {
     S.stores = (data && data.stores) || [];
     S.current = (data && data.items) || [];
     S.updatedAt = (data && data.updatedAt) || null;
+    S.hour = (data && data.hour != null) ? data.hour : 7;
     S.entries = (hist && hist.entries) || [];
     S.catalog = (cat && cat.entries) || [];
     S.canEdit = !!this.token();
@@ -95,6 +97,23 @@ const Web = {
     }
     const w = await this.json('watchlist.json');
     return (w && w.items) || [];
+  },
+  pendingRequest() {
+    let t = 0;
+    try { t = Number(localStorage.getItem('radar-refresh-req') || 0); } catch {}
+    // offen, solange noch keine neueren Daten da sind (höchstens 3 Stunden)
+    return t && t > (S.updatedAt || 0) && Date.now() - t < 3 * 3600e3 ? t : 0;
+  },
+  async requestRefresh() {
+    if (!this.token()) throw new Error('Dafür musst du unten zuerst das Bearbeiten freischalten.');
+    const now = Date.now();
+    const g = await this.api('refresh-request.json');
+    let sha;
+    if (g.ok) sha = (await g.json()).sha;
+    else if (g.status !== 404) throw new Error(ghMsg(g.status));
+    const p = await this.api('refresh-request.json', { method: 'PUT', body: JSON.stringify({ message: 'Abruf vom Handy angefragt', content: b64enc(JSON.stringify({ requestedAt: now })), sha }) });
+    if (!p.ok) throw new Error(ghMsg(p.status));
+    try { localStorage.setItem('radar-refresh-req', String(now)); } catch {}
   },
   async saveWatch(w) {
     if (!this.token()) throw new Error('Zum Bearbeiten musst du einmal deinen GitHub-Token eingeben.');
@@ -130,6 +149,24 @@ function fmtTime(ts) {
   return d.toDateString() === now.toDateString() ? `heute, ${t} Uhr`
     : d.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'numeric' }) + `, ${t} Uhr`;
 }
+function fmtShort(ts) {
+  const d = new Date(ts), now = new Date();
+  const t = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return (d.toDateString() === now.toDateString() ? 'heute' : d.toLocaleDateString('de-DE', { weekday: 'short' })) + ', ' + t;
+}
+function nextRunText() {
+  const now = new Date(), next = new Date();
+  next.setHours(S.hour, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return (next.toDateString() === now.toDateString() ? 'heute' : 'morgen') + ' ' + String(S.hour).padStart(2, '0') + ':00';
+}
+function statusText() {
+  if (S.running) return 'Angebote werden gerade abgerufen …';
+  if (S.error) return S.error;
+  if (!S.updatedAt) return 'Noch keine Angebote abgerufen.';
+  const pending = !IS_EXT && Web.pendingRequest();
+  return `Abgerufen ${fmtShort(S.updatedAt)} · ` + (pending ? 'Abruf angefragt, wartet auf den Computer' : `nächster Abruf ${nextRunText()}`);
+}
 function verdictBadge(v) {
   if (!v || v.level === 'info') return '';
   const label = { top: 'Tiefstpreis', good: 'Guter Preis', meh: 'Eher teuer' }[v.level];
@@ -148,12 +185,10 @@ function route() {
 
 // ================= Darstellung =================
 function render() {
-  $('#status').textContent = S.running ? 'Angebote werden gerade abgerufen …'
-    : S.error ? S.error
-    : S.updatedAt ? `Stand: ${fmtTime(S.updatedAt)} · ${S.current.length} Angebote` : 'Noch keine Angebote abgerufen.';
+  $('#status').textContent = statusText();
 
   $('#top-actions').innerHTML = IS_EXT
-    ? `<button class="btn" type="button" data-act="refresh" ${S.running ? 'disabled' : ''}>${S.running ? 'Läuft …' : 'Aktualisieren'}</button>
+    ? `<button class="btn" type="button" data-act="refresh" ${S.running ? 'disabled' : ''}>${S.running ? 'Läuft …' : 'Jetzt abrufen'}</button>
        <a class="btn" href="dashboard.html">Einstellungen</a>`
     : `<button class="icon-btn" type="button" data-act="reload" aria-label="Neu laden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg></button>`;
 
@@ -455,11 +490,47 @@ function viewMehr() {
     </section>
 
     <section class="card"><h3 class="first">Datenstand</h3>
-      <p class="muted small">${S.updatedAt ? 'Zuletzt aktualisiert ' + esc(fmtTime(S.updatedAt)) + '. ' : ''}Aktualisiert wird täglich über die Chrome-Erweiterung am Computer.</p>
+      <p class="small">${S.updatedAt ? `Zuletzt abgerufen: <strong>${esc(fmtTime(S.updatedAt))}</strong>.` : 'Noch keine Angebote abgerufen.'}
+        Der nächste automatische Abruf ist <strong>${nextRunText()} Uhr</strong>, sofern der Computer an ist und Chrome läuft.</p>
+      <p class="muted small">Der Knopf oben rechts lädt nur neu, was der Computer zuletzt hochgeladen hat. Die Angebote selbst kann nur die Erweiterung am Computer abrufen.</p>
       ${storeStatusHtml()}</section>
+
+    <section class="card"><h3 class="first">Abruf vom Handy anstoßen</h3>
+      <p class="note">Meist nicht nötig: Die Supermärkte ändern ihre Angebote nur etwa zweimal pro Woche, meistens montags und donnerstags. Der tägliche automatische Abruf reicht normalerweise völlig aus.</p>
+      <p class="muted small">Falls du trotzdem neue Daten brauchst: Der Computer prüft alle 5 Minuten, ob du einen Abruf angefragt hast. Er muss dafür an sein und Chrome muss laufen. Danach dauert es noch ein paar Minuten, bis die neuen Angebote hier ankommen.</p>
+      ${refreshRequestHtml()}
+    </section>
 
     <section class="card"><h3 class="first">Datenschutz</h3>
       <p class="muted small">Die App enthält nur Supermarkt-Angebote, deine Merkliste und den Preisverlauf. Keine Namen, Adressen oder Zugangsdaten. Wer die Adresse nicht kennt, findet die Seite nicht.</p></section>`;
+}
+
+function refreshRequestHtml() {
+  if (!S.canEdit) return `<p class="hint">Dafür musst du oben zuerst das Bearbeiten freischalten.</p>`;
+  const pending = Web.pendingRequest();
+  if (pending) return `<p class="ok-text">Angefragt um ${new Date(pending).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr. Wartet auf den Computer …</p>`;
+  return `<div class="row-actions"><button class="btn" type="button" data-act="request-refresh">Trotzdem jetzt abrufen</button></div><p id="req-status" class="hint"></p>`;
+}
+async function requestRefresh(btn) {
+  btn.disabled = true;
+  try {
+    await Web.requestRefresh();
+    render();
+    startPolling();
+  } catch (e) {
+    btn.disabled = false;
+    $('#req-status').textContent = e.message;
+  }
+}
+// Solange ein Abruf angefragt ist: jede Minute nach neuen Daten schauen
+let pollTimer = null;
+function startPolling() {
+  if (IS_EXT || pollTimer || !Web.pendingRequest()) return;
+  pollTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!Web.pendingRequest()) { clearInterval(pollTimer); pollTimer = null; return; }
+    if (route().v !== 'form') await reload();
+  }, 60000);
 }
 
 // Installationshinweis (nur Handy-Seite, nicht installiert)
@@ -539,6 +610,7 @@ $('#main').addEventListener('click', async e => {
   if (act === 'save-token') saveToken();
   if (act === 'remove-token') { Web.setToken(''); S.canEdit = false; render(); }
   if (act === 'install') doInstall();
+  if (act === 'request-refresh') requestRefresh(el);
 });
 $('#main').addEventListener('input', e => {
   if (e.target.id === 'q') { ui.q = e.target.value; ui.limit = 100; renderAlleList(); }
@@ -578,5 +650,6 @@ if (IS_EXT) {
   chrome.storage.onChanged.addListener(() => { clearTimeout(t); t = setTimeout(reload, 300); });
 }
 reload();
+if (!IS_EXT) setTimeout(startPolling, 2000);
 if (!IS_EXT && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 document.addEventListener('visibilitychange', () => { if (!IS_EXT && document.visibilityState === 'visible' && route().v !== 'form') reload(); });
